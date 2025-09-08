@@ -1,0 +1,10 @@
+ipykernel
+dotenv
+pandas
+openpyxl
+seaborn
+scikit-learn
+seaborn
+matplotlib
+groq
+pydantic
