@@ -1,6 +1,6 @@
 import streamlit as st
 from classes.ticket import Ticket
-
+from classifyAndResolve import resolve_ticket_general, resolve_ticket_specific
 # -------------------------
 # Custom CSS for styling
 # -------------------------
@@ -50,7 +50,8 @@ def render_ticket(ticket):
                 <div class="ticket-field"><span class="ticket-label">📅 Raised On:</span> {ticket.raised_on}</div>
                 <div class="ticket-field"><span class="ticket-label">🏷️ Category:</span> {ticket.category}</div>
                 <div class="ticket-field"><span class="ticket-label">🔖 Sub Category:</span> {ticket.sub_category}</div>
-            
+                <div class="ticket-field"><span class="ticket-label">⚡ Priority:</span> {ticket.priority}</div>
+                <div class="ticket-field"><span class="ticket-label">👥 Assignment Group:</span> {ticket.assignment_group}</div>
             """, unsafe_allow_html=True)
 
         # --- Non-editable text fields for long text ---
@@ -62,16 +63,17 @@ def render_ticket(ticket):
             st.markdown("**📌 Short Description:**")
             with st.container() as short_desc_container:
                 st.text(ticket.short_description)
-
-        # --- Remaining fields ---
-
-
-
-
-
-    # -------------------------
-    # Main Page Layout
-    # -------------------------
+    
+        if st.button("Give Resolution"):
+            with st.status("Resolving..."):
+                ticket_text = st.session_state.ticket.print_ticket()
+                st.write("Thinking Specific resolution...")
+                st.session_state["Specific Resolution"] = resolve_ticket_specific(ticket_text)
+                st.write("Thinking General Resolution...")
+                st.session_state["General Resolution"] = resolve_ticket_general(ticket_text)
+            st.success("Finished Thinking!!")
+    if ("Specific Resolution" in st.session_state) and ("General Resolution" in st.session_state):
+        st.info("Resolution has already generated. Navigate to Resolution page")
 st.title("📋 Ticket Query Details")
 
 st.markdown(

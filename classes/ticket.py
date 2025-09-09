@@ -10,8 +10,10 @@ class Ticket:
         self.sub_category = None
         self.resolution_choice = None
         self.resolution_details = None
-        self.raised_on = datetime.now()
+        self.raised_on = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.raised_by = None
+        self.priority = None
+        self.assignment_group = None
         
     def print_ticket(self):
         return f"""
@@ -21,5 +23,7 @@ class Ticket:
                 Rasied On: {self.raised_on}
                 Category: {self.category}
                 Sub Category: {self.sub_category}
+                Priority: {self.priority}
+                Assignment Group: {self.assignment_group}
               """
         
