@@ -1,14 +1,18 @@
 import streamlit as st
+import partial_resolved_page
+import auto_resolved_page
+import alloted_issue_page
 
-if ("Specific Resolution" in st.session_state) and ("General Resolution" in st.session_state):
-    with st.container(border=True) as main_container:
-        st.title("Ticket Resolution (Specific)")
-        with st.container(border=True) as sres_container:
-            st.json(st.session_state["Specific Resolution"])
-        with st.container(border=True) as gres_container:
-            st.json(st.session_state["General Resolution"])
+if ("Resolution" in st.session_state):
+    resolution = st.session_state["Resolution"]
+    if resolution["Solvability"] == "partially automated":
+        partial_resolved_page.page()
+    elif resolution["Solvability"] == "automated":
+        auto_resolved_page.page()
+    elif resolution["Solvability"] == "unsolvable":
+        alloted_issue_page.page()
+    else:
+        st.json(resolution)
+        
 else:
-    with st.container(border=True) as main_container:
-        st.title("Ticket Resolution")
-        with st.container(border=True) as res_container:
-            st.markdown("This is where ticket resolution details will be shown.")
+    st.write("No resolutions present")

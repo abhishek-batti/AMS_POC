@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from typing import List
 from groq import Groq
-
+import json
 load_dotenv()
 
 class TicketClassification(BaseModel):
@@ -203,24 +203,108 @@ Provide result strictly in JSON format with fields and no other commentaries:
             raise ValueError("Unable to parse raw content into TicketResolution")
 
 
-if __name__ == "__main__":
-    test_issue = "<UK> Strand postings for billing and material movements are all wrong"
-    classification = classify_ticket(test_issue)
-    print("Classification result:\n", classification)
+def resolve_ticket_general(issue_text: str):
+    GENERAL_SOLVER_PROMPT="""
+You are an expert IT support specialist with deep knowledge of ERP systems (e.g., SAP S/4HANA) and other IT systems. I will provide a single IT-related issue from a specific region or department. Your task is to:
 
-    specific_solution = resolve_ticket_specific(test_issue)
-    print("\nSpecific solution result:\n", specific_solution)
+Classify the issue into one of the following IT support levels based on its complexity:
 
-    general_solution = resolve_ticket_general(test_issue)
-    print("\nGeneral solution result:\n", general_solution)
+L1 (Low Level): Simple issue requiring basic knowledge, such as user errors, standard transaction usage, or basic troubleshooting (e.g., checking settings, running reports, or guiding users through standard processes).
+L2 (Medium Level): Operational issue requiring moderate expertise, such as system configuration changes via standard customizing (e.g., updating master data, adjusting settings in SPRO, or scheduling batch jobs).
+L3 (High Level): Complex issue requiring advanced steps, such as custom code changes, ABAP development, debugging, or significant system modifications (e.g., enhancing user exits, fixing core system bugs, or addressing deep integration issues).
 
-    # Sample output:
+Provide a step-by-step solution for the issue, tailored to its classified support level.
+If the issue references a specific incident number, note that historical context may need review but provide a general solution based on common practices.
+Ensure the solution is practical, follows best practices, and prioritizes system stability. Do not invent details; base the solution on standard processes and configurations. If clarification is needed for the issue, note it and provide a generalized approach.
 
-    # Classification result:
-    # {'category': 'Record to Report', 'subcategory': 'CO', 'assignment_group': 'TwO CG Record to Report', 'confidence': 0.92, 'signals': ['Strand postings', 'billing', 'material movements', '<UK>'], 'priority': 'High'}
+Provide result strictly in JSON format with fields and no other commentaries:
+- level: L1, L2, or L3
+- solutions: List of step-by-step instructions
+"""
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[{"role": "system", "content": GENERAL_SOLVER_PROMPT},
+                  {"role": "user", "content": issue_text}],
+        temperature=0.2,
+        response_format={"type": "json_object"}
+    )
 
-    # Specific solution result:
-    # {'level': 'L2', 'solutions': ['1. Verify the posting keys used for billing and material movements – open transaction **OBYC** and check the posting key assignments for the relevant document types (e.g., 01 for billing, 01/02 for material movements). Ensure the keys are correctly mapped to the appropriate G/L accounts and posting types.', '2. Check the posting period settings – run transaction **OB52** and confirm that the posting periods for the fiscal year are open for the periods in which the incorrect postings were made. If closed, open the period or use a period open/close exception if business‑justified.', '3. Review the document type configuration – navigate to **SPRO → Materials Management → Material Master → Accounting → Define Document Types** and confirm that the document type used for the postings is correctly linked to the posting keys and G/L accounts. Adjust if necessary.', '4. Inspect the G/L account assignments – use transaction **OBYC** or **OBYC** (for posting keys) and **OBYC** (for account groups) to ensure the G/L accounts used in the postings are correctly assigned to the posting keys and document types. Correct any mismatches.', '5. Validate integration settings – in **SPRO → Sales and Distribution → Billing → Billing Documents → Define Billing Document Types** and **SPRO → Materials Management → Material Master → Accounting → Define Posting Keys for Material Movements**, confirm that the integration between SD and MM is correctly configured for the posting keys in use.', '6. Test the corrected configuration in a sandbox or development system – create a test billing document and a test material movement using the same posting keys and verify that the postings now reflect the correct amounts and G/L accounts.', '7. If the test is successful, transport the configuration changes to the quality and production systems using the standard transport request process. Ensure that all affected roles have the necessary authorizations (e.g., **S_TCODE** for OBYC, OB52, and SPRO).', '8. After transport, clear the SAP cache (transaction **SM12** for locks, **SM58** for background jobs) and restart any relevant background processes if necessary. Monitor the next few postings to confirm the issue is resolved.']}
+    raw_content = response.choices[0].message.content
+    # print("Raw result:\n", raw_content)
 
-    # General solution result:
-    # {'level': 'L2', 'solutions': ['1. Identify the posting keys used for the billing and material movement transactions that are producing incorrect postings.', '2. In SPRO, navigate to Accounting > Financial Accounting > Financial Accounting Global Settings > Document > Posting > Posting Keys. Verify that the posting keys for the affected transaction types are correctly assigned to the appropriate GL accounts and posting periods.', '3. Check the document type configuration (SPRO > Accounting > Financial Accounting > Financial Accounting Global Settings > Document > Document Types) to ensure the document type used for these postings has the correct posting key and account determination settings.', '4. Review the account determination settings for the relevant posting keys (SPRO > Accounting > Financial Accounting > Financial Accounting Global Settings > Document > Account Determination > Posting Key). Confirm that the correct G/L account groups and account groups are assigned.', '5. Examine the posting period control (SPRO > Accounting > Financial Accounting > Financial Accounting Global Settings > Posting Periods > Posting Period Control) to ensure the posting period is open for the transaction dates and that the period control settings are correct for the document type.', '6. Verify that no user exits or BADI (e.g., USEREXIT_BADI_POSTING) is active that could be overriding standard posting logic. If active, review the custom code for potential errors.', '7. Perform a test posting in a sandbox or test system using the same transaction and posting key. Capture the resulting accounting document and compare it to the expected outcome.', '8. If discrepancies are found, adjust the configuration in SPRO accordingly (e.g., correct posting key assignment, update account determination, or modify posting period control).', '9. After configuration changes, repeat the test posting to confirm that the postings are now correct.', '10. Document the changes made, including the rationale, the configuration paths, and any test results, and communicate the update to relevant users and stakeholders.']}
+    try:
+        # Try direct parse first
+        result = TicketResolution.model_validate_json(raw_content)
+        return result.model_dump()
+    except Exception:
+        # Fallback: try to slice out JSON portion
+        try:
+            start = raw_content.find("{")
+            end = raw_content.rfind("}")
+            if start != -1 and end != -1:
+                json_str = raw_content[start:end+1]
+                result = TicketResolution.model_validate_json(json_str)
+                return result.model_dump()
+        except Exception as e:
+            print("Fallback parsing failed:", e)
+            raise ValueError("Unable to parse raw content into TicketResolution")
+
+
+def resolve_ticket(issue_text: str, context_text: str):
+    GENERAL_SOLVER_PROMPT = """
+You are an expert IT support specialist with access to the organization's SOPs and knowledge base.
+
+Your task is to:
+1. Use the provided SOP context to suggest a resolution for the given IT issue.
+2. Classify the issue resolution into one of the following categories:
+   - "automated": Fully solvable with automation steps.
+   - "partially automated": Some steps can be automated, but final step requires human decision/action.
+   - "unsolvable": Too complex or not covered by SOPs, should be escalated to human staff.
+
+3. If the resolution is "automated", return all automation steps.
+   If it is "partially automated", return the automation steps and the last step should be "Escalate to human staff".
+   If it is "unsolvable", return no steps.
+
+Strictly return the result in JSON format:
+{
+  "Solvability": "automated" | "partially automated" | "unsolvable",
+  "steps": [ "step1", "step2", ... ]
+}
+"""
+
+    full_prompt = f"""
+Context (SOPs / Knowledge Base):
+{context_text}
+
+Issue:
+{issue_text}
+"""
+
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": GENERAL_SOLVER_PROMPT},
+            {"role": "user", "content": full_prompt}
+        ],
+        temperature=0.2,
+        response_format={"type": "json_object"}
+    )
+
+    raw_content = response.choices[0].message.content
+
+    try:
+        # Try parsing directly
+        result = json.loads(raw_content)
+        return result
+    except Exception:
+        # Fallback: extract JSON manually
+        try:
+            start = raw_content.find("{")
+            end = raw_content.rfind("}")
+            if start != -1 and end != -1:
+                json_str = raw_content[start:end+1]
+                result = json.loads(json_str)
+                return result
+        except Exception as e:
+            print("Fallback parsing failed:", e)
+            raise ValueError("Unable to parse raw content into resolution JSON")

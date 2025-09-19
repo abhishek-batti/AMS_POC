@@ -1,90 +1,137 @@
 import streamlit as st
 from classes.ticket import Ticket
-from classifyAndResolve import resolve_ticket_general, resolve_ticket_specific
+from classifyAndResolve import resolve_ticket_general, resolve_ticket_specific, resolve_ticket
+from RAG import RAGRetriever
+import json
 # -------------------------
-# Custom CSS for styling
+# Custom CSS
 # -------------------------
 st.markdown("""
     <style>
     .ticket-card {
         background-color: #ffffff;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-        margin-top: 15px;
+        padding: 25px;
+        border-radius: 14px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+        margin-top: 20px;
     }
     .ticket-header {
-        font-size: 20px;
+        font-size: 22px;
         font-weight: 700;
         color: #2c3e50;
-        margin-bottom: 15px;
+        margin-bottom: 20px;
     }
     .ticket-field {
         font-size: 16px;
-        margin: 8px 0;
-        line-height: 1.4;
+        margin: 10px 0;
+        line-height: 1.5;
     }
     .ticket-label {
         font-weight: 600;
         color: #34495e;
     }
+    .status-open {
+        background: #27ae60;
+        color: white;
+        padding: 3px 10px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+    }
+    .status-pending {
+        background: #f39c12;
+        color: white;
+        padding: 3px 10px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+    }
+    .status-closed {
+        background: #c0392b;
+        color: white;
+        padding: 3px 10px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+    }
+    .section-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #2c3e50;
+        margin-top: 20px;
+        margin-bottom: 10px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-def render_ticket(ticket):
-    # Status badge class
+
+# -------------------------
+# Render Ticket Details
+# -------------------------
+def render_ticket(ticket: Ticket):
+    # Convert values to safe strings
+    status = str(ticket.status)
+    raised_on = str(ticket.raised_on)
+    category = str(ticket.category)
+    sub_category = str(ticket.sub_category)
+    priority = str(ticket.priority)
+    assignment_group = str(ticket.assignment_group)
+    description = str(ticket.description)
+
+    # Badge style for status
     status_class = "status-open"
-    if ticket.status.lower() == "closed":
+    if status.lower() == "closed":
         status_class = "status-closed"
-    elif ticket.status.lower() == "pending":
+    elif status.lower() == "pending":
         status_class = "status-pending"
 
-    with st.container(border=True) as main_container: 
-        with st.container(border=True) as header_container:
-            st.markdown(f"<div class='ticket-header'>🎫 Ticket Details</div>", unsafe_allow_html=True)
-        
-        with st.container(border=True) as status_container:
-            st.markdown(f"""
-            
-                <div class="ticket-field"><span class="ticket-label">📂 Status:</span> <span class="{status_class}">{ticket.status}</span></div>
-                <div class="ticket-field"><span class="ticket-label">📅 Raised On:</span> {ticket.raised_on}</div>
-                <div class="ticket-field"><span class="ticket-label">🏷️ Category:</span> {ticket.category}</div>
-                <div class="ticket-field"><span class="ticket-label">🔖 Sub Category:</span> {ticket.sub_category}</div>
-                <div class="ticket-field"><span class="ticket-label">⚡ Priority:</span> {ticket.priority}</div>
-                <div class="ticket-field"><span class="ticket-label">👥 Assignment Group:</span> {ticket.assignment_group}</div>
-            """, unsafe_allow_html=True)
+    # Ticket card
+    st.markdown(f"""
+    <div class='ticket-card'>
+        <div class='ticket-header'>🎫 Ticket Details</div>
+        <div class="ticket-field"><span class="ticket-label">📂 Status:</span> <span class="{status_class}">{status}</span></div>
+        <div class="ticket-field"><span class="ticket-label">📅 Raised On:</span> {raised_on}</div>
+        <div class="ticket-field"><span class="ticket-label">🏷️ Category:</span> {category}</div>
+        <div class="ticket-field"><span class="ticket-label">🔖 Sub Category:</span> {sub_category}</div>
+        <div class="ticket-field"><span class="ticket-label">⚡ Priority:</span> {priority}</div>
+        <div class="ticket-field"><span class="ticket-label">👥 Assignment Group:</span> {assignment_group}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-        # --- Non-editable text fields for long text ---
-        with st.container(border=True) as _: 
-            st.markdown("**📝 User Query:**")
-            with st.container() as user_query_container:
-                st.text(ticket.description)
-        with st.container(border=True) as _:
-            st.markdown("**📌 Short Description:**")
-            with st.container() as short_desc_container:
-                st.text(ticket.short_description)
-    
-        if st.button("Give Resolution"):
-            with st.status("Resolving..."):
-                ticket_text = st.session_state.ticket.print_ticket()
-                st.write("Thinking Specific resolution...")
-                st.session_state["Specific Resolution"] = resolve_ticket_specific(ticket_text)
-                st.write("Thinking General Resolution...")
-                st.session_state["General Resolution"] = resolve_ticket_general(ticket_text)
-            st.success("Finished Thinking!!")
-    if ("Specific Resolution" in st.session_state) and ("General Resolution" in st.session_state):
-        st.info("Resolution has already generated. Navigate to Resolution page")
+    # User Query
+    st.markdown("<div class='section-title'>📝 User Query</div>", unsafe_allow_html=True)
+    st.text_area("User Query", value=description, height=140, disabled=True, label_visibility="collapsed")
+
+    # Resolution button
+    if st.button("💡 Generate Resolution", use_container_width=True):
+        with st.status("⚙️ Working on resolution..."):
+            ticket_text = st.session_state.ticket.print_ticket()
+            st.write("Retriving Relevant Docs from knowledge base...")
+            retriever = RAGRetriever()
+            results = retriever.query(description, top_k=4)
+            print(json.dumps(results, indent=2, ensure_ascii=False)[:10000])
+            st.write("Creating context...")
+            context = retriever.get_prompt_text(results, max_chars=3500)[:5000]
+            st.write("Solving...")
+            resolution = resolve_ticket(description, context)
+            st.session_state["Resolution"] = resolution
+            st.success("✅ Resolutions generated successfully!")
+
+    if ("Resolution" in st.session_state):
+        st.info("📑 Resolution is Ready. Navigate to the **Resolution** page to review them.")
+
+
+# -------------------------
+# Page Content
+# -------------------------
 st.title("📋 Ticket Query Details")
-
 st.markdown(
     "Here you can review the details of your submitted ticket. "
-    "Our system has captured all key information for easy reference."
+    "Our system has neatly captured all key information for easy reference."
 )
-
 st.divider()
 
 if "ticket" in st.session_state:
-    ticket = st.session_state.ticket
-    render_ticket(ticket)
+    render_ticket(st.session_state.ticket)
 else:
     st.info("⚠️ No ticket available. Please create a ticket first.")
