@@ -92,26 +92,28 @@ def page():
         if "Resolution" in st.session_state:
             st.subheader("📍 Resolution Journey")
             resolution = st.session_state["Resolution"]
+            step_count = 1
             for step in resolution["steps"]:
-                if step.lower() == "escalate to human staff":
+                if "escalate" in step.lower():
                     st.markdown(f"""
                                 <div class="workflow-step ai">
-                                    <div class="step-title">🤖 Step 4: Assigning Support Staff <span class="badge success">Suppport staff Assigned</span></div>
+                                    <div class="step-title">🤖 Step {step_count}: Assigning Support Staff <span class="badge success">Suppport staff Assigned</span></div>
                                     Assigned to <b>{ticket.assignment_group}</b>.
                                 </div>
 
                                 <div class="workflow-step human">
-                                    <div class="step-title">👨‍💻 Step 5: Support Team is working on resolution <span class="badge warning">In Progress</span></div>
+                                    <div class="step-title">👨‍💻 Step {step_count + 1}: Support Team is working on resolution <span class="badge warning">In Progress</span></div>
                                     Assigned to <b>{ticket.assignment_group}</b>. Resolution in progress.
                                 </div>
                                 """, unsafe_allow_html=True)
+                    step_count += 2
                 else:
                     st.markdown(f"""
                                 <div class="workflow-step ai">
-                                    <div class="step-title">🤖 Step 1: {step} <span class="badge success">Success</span></div>
+                                    <div class="step-title">🤖 Step {step_count}: {step} <span class="badge success">Success</span></div>
                                     
                                 </div>
                                 
                                 """, unsafe_allow_html=True)
-            
+                    step_count += 1
             
