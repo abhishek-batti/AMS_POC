@@ -3,106 +3,82 @@ import fitz  # PyMuPDF
 from sentence_transformers import SentenceTransformer
 import numpy as np
 import faiss
-import json
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # ---------- Settings ----------
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 200
-TOP_K = 5
+TOP_K = 3
+DISTANCE_THRESHOLD = 0.2  # Minimum similarity threshold
+
 
 class RAGRetriever:
-    def __init__(self, embed_model_name=EMBED_MODEL_NAME):
+    def __init__(self, folder: str = "D:\\AMS_POC\\AMS_POC\\Sops", embed_model_name=EMBED_MODEL_NAME):
         self.model = SentenceTransformer(embed_model_name)
+        self.pdf_texts = []       # Full text of each PDF
+        self.metadatas = []       # Metadata for each PDF
         self.index = None
-        self.chunks = []
-        self.metadatas = []
-        self._build_from_folder("D:\\AMS_POC\\AMS_POC\\Sops")
+        self._build_from_folder(folder)
+
+    def _extract_pdf_text(self, pdf_file):
+        """Extract all text from a PDF (no OCR)"""
+        full_text = []
+        with fitz.open(pdf_file) as doc:
+            for page_num, page in enumerate(doc, start=1):
+                blocks = page.get_text("blocks")
+                if not blocks:
+                    continue
+                # Sort blocks top-to-bottom, left-to-right
+                blocks = sorted(blocks, key=lambda b: (b[1], b[0]))
+                page_text = "\n".join([b[4].strip() for b in blocks if b[4].strip()])
+                if page_text:
+                    full_text.append(f"Page {page_num}:\n{page_text}")
+        return "\n\n".join(full_text)
 
     def _build_from_folder(self, folder: str):
-        """Extract text from PDFs, chunk it, and build FAISS index."""
+        """Extract text from PDFs and build FAISS index at PDF-level"""
         folder = Path(folder)
-        assert folder.exists(), f"Folder not found: {folder}"
+        if not folder.exists():
+            raise FileNotFoundError(f"Folder not found: {folder}")
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=CHUNK_SIZE,
-            chunk_overlap=CHUNK_OVERLAP,
-            separators=["\n\n", "\n", ".", " ", ""]
+        for pdf_file in folder.glob("*.pdf"):
+            text = self._extract_pdf_text(pdf_file)
+            if not text:
+                continue
+            self.pdf_texts.append(text)
+            self.metadatas.append({"source_file": pdf_file.name})
+
+        if not self.pdf_texts:
+            raise ValueError("No text found in PDFs.")
+
+        # Encode embeddings for full PDFs
+        embeddings = self.model.encode(
+            self.pdf_texts, batch_size=8, show_progress_bar=True, convert_to_numpy=True
         )
-
-        for pdf in folder.glob("*.pdf"):
-            doc = fitz.open(str(pdf))
-            for i in range(len(doc)):
-                text = doc.load_page(i).get_text("text").strip()
-                if text:
-                    page_chunks = splitter.split_text(text)
-                    for idx, chunk in enumerate(page_chunks):
-                        self.chunks.append(chunk)
-                        self.metadatas.append({
-                            "source_file": pdf.name,
-                            "page": i + 1,
-                            "chunk_index_in_page": idx
-                        })
-            doc.close()
-
-        if not self.chunks:
-            raise ValueError("No text chunks found in PDFs.")
-
-        embeddings = self.model.encode(self.chunks, show_progress_bar=True, convert_to_numpy=True)
         faiss.normalize_L2(embeddings)
-        dim = embeddings.shape[1]
-        self.index = faiss.IndexFlatIP(dim)
+        self.index = faiss.IndexFlatIP(embeddings.shape[1])
         self.index.add(embeddings)
 
     def query(self, query: str, top_k=TOP_K):
-        """Query the index and return top_k relevant chunks with metadata."""
+        """Query FAISS and return top PDFs whose content matches the query"""
         q_emb = self.model.encode([query], convert_to_numpy=True)
         faiss.normalize_L2(q_emb)
-        D, I = self.index.search(q_emb, top_k)
+        distances, indices = self.index.search(q_emb, top_k)
 
-        # Select relevant neighbors based on largest gap in distances
-        distances, indices = np.array(D[0]), np.array(I[0])
-        mask = distances >= 0.2  # Keep all for gap-based selection
-        filtered_indices = indices[mask]
-        filtered_distances = distances[mask]
-
-        if len(filtered_indices) <= 1:
-            selected_indices = filtered_indices.tolist()
-        else:
-            gaps = np.diff(filtered_distances)
-            cutoff_pos = np.argmax(gaps) + 1
-            selected_indices = filtered_indices[:cutoff_pos].tolist()
-
-        return [{
-            "text": self.chunks[idx],
-            "metadata": self.metadatas[idx],
-            "score": float(D[0][np.where(I[0] == idx)][0])
-        } for idx in selected_indices]
+        results = []
+        for idx, score in zip(indices[0], distances[0]):
+            if score >= DISTANCE_THRESHOLD:
+                results.append({
+                    "text": self.pdf_texts[idx],
+                    "metadata": self.metadatas[idx],
+                    "score": float(score)
+                })
+        return results
 
     def get_prompt_text(self, results, max_chars=3000):
-        """Concatenate results into prompt-ready text, merging consecutive chunks."""
-        pieces, cur_len, merged_text, prev_meta = [], 0, [], None
+        """Concatenate results into prompt-ready text"""
+        pieces, cur_len = [], 0
         for r in results:
-            meta = (r["metadata"]["source_file"], r["metadata"]["page"])
-            text = r["text"].strip()
-            if prev_meta and meta == prev_meta:
-                # Merge overlapping text
-                prev_text = merged_text[-1]["text"]
-                max_overlap = min(len(prev_text), len(text))
-                overlap_len = 0
-                for i in range(max_overlap, 10, -1):
-                    if prev_text.endswith(text[:i]):
-                        overlap_len = i
-                        break
-                merged_text[-1]["text"] = prev_text + text[overlap_len:]
-            else:
-                merged_text.append({"meta": meta, "text": text})
-            prev_meta = meta
-
-        for item in merged_text:
-            src, page = item["meta"]
-            part = f"Source: {src} | Page: {page}\n{item['text']}\n---\n"
+            src = r["metadata"]["source_file"]
+            part = f"Source: {src}\n{r['text']}\n---\n"
             if cur_len + len(part) > max_chars:
                 remaining = max_chars - cur_len
                 if remaining > 0:
@@ -112,10 +88,11 @@ class RAGRetriever:
             cur_len += len(part)
         return "\n".join(pieces)
 
+
 # ---------- Usage ----------
-if __name__ == "__main__":
-    # pdf_folder = "D:\\AMS_POC\\AMS_POC\\Sops"
-    # query = "Data Source connection to IBP failed"
-    # query = "Unable to access S4 HANA Fiori development public URI"
-    query = "All accounts not working S4 and BW"
-    
+# if __name__ == "__main__":
+#     retriever = RAGRetriever(folder="D:\\AMS_POC\\AMS_POC\\Sops")
+#     query = "All accounts not working S4 and BW"
+#     results = retriever.query(query)
+#     prompt_text = retriever.get_prompt_text(results)
+#     print(prompt_text[:2000], "\n... [truncated]\n")  # Print first 2000 chars
