@@ -1,6 +1,6 @@
 import streamlit as st
 from classes.ticket import Ticket
-from classifyAndResolve import resolve_ticket_general, resolve_ticket_specific, resolve_ticket
+from classifyAndResolve import resolve_ticket
 from RAG import RAGRetriever
 import json
 # -------------------------

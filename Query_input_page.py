@@ -65,9 +65,9 @@ def query_input_page():
             ticket = Ticket(description=user_query)
 
             with st.spinner("🔍 Classifying your ticket..."):
-                classification = classify_category(user_query)
-                ticket.category = ''.join(classification[:-1])
-                ticket.sub_category = classification[-1]
+                classification = classify_ticket(user_query)
+                ticket.category = classification.get("category")
+                ticket.sub_category = classification.get("subcategory")
 
             with st.spinner("👥 Assigning to the right group..."):
                 response = classify_ticket(ticket.print_ticket())
