@@ -54,7 +54,7 @@ def query_input_page():
         st.markdown("### ✍️ Enter your Query")
         user_query = st.text_area(
             "Provide details about your issue:",
-            st.session_state.ticket.description if "ticket" in st.session_state else "",
+            
             height=150,
             placeholder="e.g., Unable to connect to VPN after update..."
         )
@@ -62,6 +62,7 @@ def query_input_page():
         submitted = st.form_submit_button("🚀 Create Ticket")
 
         if submitted and user_query.strip():
+            
             ticket = Ticket(description=user_query)
 
             with st.spinner("🔍 Classifying your ticket..."):
